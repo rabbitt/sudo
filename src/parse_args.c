@@ -112,6 +112,15 @@ static struct sudo_settings {
     { NULL }
 };
 
+
+/*
+ * Default flags allowed when running a command.
+ */
+#define DEFAULT_VALID_FLAGS  (MODE_BACKGROUND|MODE_PRESERVE_ENV|MODE_RESET_HOME|MODE_LOGIN_SHELL|MODE_NONINTERACTIVE|MODE_PRESERVE_GROUPS|MODE_SHELL)
+#define EDIT_VALID_FLAGS MODE_NONINTERACTIVE
+#define LIST_VALID_FLAGS (MODE_NONINTERACTIVE|MODE_LONG_LIST)
+#define VALIDATE_VALID_FLAGS MODE_NONINTERACTIVE
+
 /*
  * Command line argument parsing.
  * Sets nargc and nargv which corresponds to the argc/argv we'll use
@@ -140,6 +149,7 @@ parse_args(int argc, char **argv, int *nargc, char ***nargv, char ***settingsp,
     if (strcmp(getprogname(), "sudoedit") == 0) {
 	mode = MODE_EDIT;
 	sudo_settings[ARG_SUDOEDIT].value = "true";
+	valid_flags = EDIT_VALID_FLAGS;
     }
 
     /* Load local IP addresses and masks. */
@@ -213,6 +223,7 @@ parse_args(int argc, char **argv, int *nargc, char ***nargv, char ***settingsp,
 		    break;
 		case 'H':
 		    sudo_settings[ARG_SET_HOME].value = "true";
+		    SET(flags, MODE_RESET_HOME);
 		    break;
 		case 'h':
 		    if (mode && mode != MODE_HELP) {
@@ -244,7 +255,7 @@ parse_args(int argc, char **argv, int *nargc, char ***nargv, char ***settingsp,
 			    usage_excl(1);
 		    }
 		    mode = MODE_LIST;
-		    valid_flags = MODE_NONINTERACTIVE|MODE_LONG_LIST;
+		    valid_flags = LIST_VALID_FLAGS;
 		    break;
 		case 'n':
 		    SET(flags, MODE_NONINTERACTIVE);
@@ -252,6 +263,7 @@ parse_args(int argc, char **argv, int *nargc, char ***nargv, char ***settingsp,
 		    break;
 		case 'P':
 		    sudo_settings[ARG_PRESERVE_GROUPS].value = "true";
+		    SET(flags, MODE_PRESERVE_GROUPS);
 		    break;
 		case 'p':
 		    sudo_settings[ARG_PROMPT].value = optarg;
@@ -284,7 +296,7 @@ parse_args(int argc, char **argv, int *nargc, char ***nargv, char ***settingsp,
 		    if (mode && mode != MODE_VALIDATE)
 			usage_excl(1);
 		    mode = MODE_VALIDATE;
-		    valid_flags = MODE_NONINTERACTIVE;
+		    valid_flags = VALIDATE_VALID_FLAGS;
 		    break;
 		case 'V':
 		    if (mode && mode != MODE_VERSION)
@@ -317,7 +329,7 @@ parse_args(int argc, char **argv, int *nargc, char ***nargv, char ***settingsp,
     if (!mode) {
 	/* Defer -k mode setting until we know whether it is a flag or not */
 	if (sudo_settings[ARG_IGNORE_TICKET].value != NULL) {
-	    if (argc == 0 && !(flags & (MODE_SHELL|MODE_LOGIN_SHELL))) {
+	    if (argc == 0 && !ISSET(flags, MODE_SHELL|MODE_LOGIN_SHELL)) {
 		mode = MODE_INVALIDATE;	/* -k by itself */
 		sudo_settings[ARG_IGNORE_TICKET].value = NULL;
 		valid_flags = 0;
@@ -377,18 +389,21 @@ parse_args(int argc, char **argv, int *nargc, char ***nargv, char ***settingsp,
     /*
      * For shell mode we need to rewrite argv
      */
-    if (ISSET(mode, MODE_RUN) && ISSET(flags, MODE_SHELL)) {
+    if (ISSET(flags, MODE_SHELL|MODE_LOGIN_SHELL) && ISSET(mode, MODE_RUN)) {
 	char **av, *cmnd = NULL;
 	int ac = 1;
 
 	if (argc != 0) {
 	    /* shell -c "command" */
 	    char *src, *dst;
-	    size_t cmnd_size = (size_t) (argv[argc - 1] - argv[0]) +
-		strlen(argv[argc - 1]) + 1;
+	    size_t size = 0;
 
-	    cmnd = dst = emalloc2(cmnd_size, 2);
-	    for (av = argv; *av != NULL; av++) {
+	    for (av = argv; *av != NULL; av++)
+		size += strlen(*av) + 1;
+	    if (size == 0 || (cmnd = emalloc2(size, 2)) == NULL)
+		errorx(1, _("%s: %s"), __func__, _("unable to allocate memory"));
+
+	    for (dst = cmnd, av = argv; *av != NULL; av++) {
 		for (src = *av; *src != '\0'; src++) {
 		    /* quote potential meta characters */
 		    if (!isalnum((unsigned char)*src) && *src != '_' && *src != '-')

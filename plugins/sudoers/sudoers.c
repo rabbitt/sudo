@@ -472,7 +472,7 @@ sudoers_policy_main(int argc, char * const argv[], int pwflag, char *env_add[],
 
     /* If run as root with SUDO_USER set, set sudo_user.pw to that user. */
     /* XXX - causes confusion when root is not listed in sudoers */
-    if (sudo_mode & (MODE_RUN | MODE_EDIT) && prev_user != NULL) {
+    if (ISSET(sudo_mode, MODE_RUN|MODE_EDIT) && prev_user != NULL) {
 	if (user_uid == 0 && strcmp(prev_user, "root") != 0) {
 	    struct passwd *pw;
 
@@ -888,8 +888,8 @@ set_cmnd(void)
     if (user_cmnd == NULL)
 	user_cmnd = NewArgv[0];
 
-    if (sudo_mode & (MODE_RUN | MODE_EDIT | MODE_CHECK)) {
-	if (ISSET(sudo_mode, MODE_RUN | MODE_CHECK)) {
+    if (ISSET(sudo_mode, MODE_RUN|MODE_EDIT|MODE_CHECK)) {
+	if (!ISSET(sudo_mode, MODE_EDIT)) {
 	    if (def_secure_path && !user_is_exempt())
 		path = def_secure_path;
 	    set_perms(PERM_RUNAS);
@@ -914,7 +914,8 @@ set_cmnd(void)
 	    for (size = 0, av = NewArgv + 1; *av; av++)
 		size += strlen(*av) + 1;
 	    user_args = emalloc(size);
-	    if (ISSET(sudo_mode, MODE_SHELL|MODE_LOGIN_SHELL)) {
+	    if (ISSET(sudo_mode, MODE_SHELL|MODE_LOGIN_SHELL) && 
+		ISSET(sudo_mode, MODE_RUN)) {
 		/*
 		 * When running a command via a shell, the sudo front-end
 		 * escapes potential meta chars.  We unescape non-spaces
@@ -922,9 +923,19 @@ set_cmnd(void)
 		 */
 		for (to = user_args, av = NewArgv + 1; (from = *av); av++) {
 		    while (*from) {
-			if (from[0] == '\\' && !isspace((unsigned char)from[1]))
+			if (from[0] == '\\' && from[1] != '\0' && 
+				!isspace((unsigned char)from[1])) {
 			    from++;
+			}
+			if (size - (to - user_args) < 1) {
+				warningx(_("internal error, %s overflow"), __func__);
+				debug_return_int(NOT_FOUND_ERROR);
+			}
 			*to++ = *from++;
+		    }
+		    if (size - (to - user_args) < 1) {
+			warningx(_("internal error, %s overflow"), __func__);
+			debug_return_int(NOT_FOUND_ERROR);
 		    }
 		    *to++ = ' ';
 		}
@@ -1220,6 +1231,7 @@ sudoers_policy_version(int verbose)
 static int
 deserialize_info(char * const args[], char * const settings[], char * const user_info[])
 {
+    const int edit_mask = MODE_EDIT|MODE_IGNORE_TICKET|MODE_NONINTERACTIVE;
     char * const *cur;
     const char *p, *groups = NULL;
     const char *debug_flags = NULL;
@@ -1368,6 +1380,12 @@ deserialize_info(char * const args[], char * const settings[], char * const user
 	}
     }
 
+    /* Sudo front-end should restrict mode flags for sudoedit. */
+    if (ISSET(flags, MODE_EDIT) && (flags & edit_mask) != flags) {
+	warningx(_("invalid mode flags from sudo front end: 0x%x"), flags);
+	goto bad;
+    }
+
     for (cur = user_info; *cur != NULL; cur++) {
 	if (MATCHES(*cur, "user=")) {
 	    user_name = estrdup(*cur + sizeof("user=") - 1);
@@ -1456,6 +1474,9 @@ deserialize_info(char * const args[], char * const settings[], char * const user
     }
 
 #undef MATCHES
+    debug_return_int(flags);
+
+bad:
     debug_return_int(flags);
 }
 

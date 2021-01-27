@@ -125,6 +125,7 @@ struct sudo_user {
 #define FOUND                   0
 #define NOT_FOUND               1
 #define NOT_FOUND_DOT		2
+#define NOT_FOUND_ERROR		3
 
 /*
  * Various modes sudo can be in (based on arguments) in hex
